@@ -53,6 +53,45 @@ class Scene {
     void handle_collision(Mesh& m1, Mesh& m2, const double& depth, const RowVector3d& contactNormal, const RowVector3d& penPosition,
                           const double CRCoeff) {
         /**************TODO: implement this function**************/
+        // If both objects are fixed, do nothing
+        if (m1.isFixed && m2.isFixed) return;
+
+        // Resolve linear interpenetration
+        double totalInvMass = m1.totalInvMass + m2.totalInvMass;
+        double w1 = m1.totalInvMass / totalInvMass;
+        double w2 = m2.totalInvMass / totalInvMass;
+
+        m1.COM -= w1 * depth * contactNormal;
+        m2.COM += w2 * depth * contactNormal;
+
+        // Compute common contact point
+        RowVector3d contactPoint = penPosition + w2 * depth * contactNormal;
+
+        // Compute arms from COM to contact point
+        RowVector3d r1 = contactPoint - m1.COM;
+        RowVector3d r2 = contactPoint - m2.COM;
+
+        // Compute velocities at contact point
+        RowVector3d v1 = m1.comVelocity + m1.angVelocity.cross(r1);
+        RowVector3d v2 = m2.comVelocity + m2.angVelocity.cross(r2);
+
+        // Compute impulse magnitude
+        double numerator = -(1.0 + CRCoeff) * (v1 - v2).dot(contactNormal);
+        RowVector3d t1 = (m1.get_curr_inv_IT() * r1.cross(contactNormal).transpose()).transpose();
+        RowVector3d t2 = (m2.get_curr_inv_IT() * r2.cross(contactNormal).transpose()).transpose();
+        double denominator = totalInvMass + r1.cross(contactNormal).dot(t1) + r2.cross(contactNormal).dot(t2);
+
+        if (denominator == 0) return;
+        double j = numerator / denominator;
+
+        // Apply impulses
+        RowVector3d impulse = j * contactNormal;
+        m1.currImpulses.push_back({contactPoint, impulse});
+        m2.currImpulses.push_back({contactPoint, -impulse});
+
+        // Update velocities
+        m1.update_impulse_velocities();
+        m2.update_impulse_velocities();
     }
 
     /*********************************************************************

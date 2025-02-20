@@ -116,13 +116,24 @@ class Mesh {
     // return the current inverted inertia tensor around the current COM. Update it by applying the orientation
     Matrix3d get_curr_inv_IT() {
         /****************************TODO: implement this function***************************/
-        return Matrix3d::Zero();
+        Matrix3d R = Q2RotMatrix(orientation);
+        return R * invIT * R.transpose();
     }
 
     // Update the current position and orientation by integrating the linear and angular velocities, and update currV accordingly
     // You need to modify this according to its purpose
     void update_position(double timeStep) {
         /***************************TODO: implement this function**********************/
+
+        // Update the center of mass position
+        COM += comVelocity * timeStep;
+
+        // Update the orientation
+        RowVector4d angVelQuat(0, angVelocity(0), angVelocity(1), angVelocity(2));
+        orientation += 0.5 * timeStep * QMult(angVelQuat, orientation);
+        orientation.normalize();
+
+        for (int i = 0; i < currV.rows(); i++) currV.row(i) = QRot(origV.row(i), orientation) + COM;
     }
 
     // Updating velocity *instantaneously*. i.e., not integration from acceleration, but as a result of a collision impulse from the
@@ -230,6 +241,13 @@ class Mesh {
     // You need to modify this to integrate from acceleration in the field (basically gravity)
     void update_velocity(double timeStep) {
         /***************************TODO: implement this function**********************/
+        // Apply gravity
+        RowVector3d gravity(0, -9.8, 0);
+        comVelocity += gravity * timeStep;
+
+        // Apply torque
+        RowVector3d torque = (-COM).cross(totalInvMass * gravity);
+        angVelocity += invIT * torque.transpose() * timeStep;
     }
 
     // the full integration for the time step (velocity + position)
