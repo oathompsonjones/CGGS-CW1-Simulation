@@ -125,6 +125,8 @@ class Mesh {
     void update_position(double timeStep) {
         /***************************TODO: implement this function**********************/
 
+        if (isFixed) return;
+
         // Update the center of mass position
         COM += comVelocity * timeStep;
 
@@ -241,6 +243,9 @@ class Mesh {
     // You need to modify this to integrate from acceleration in the field (basically gravity)
     void update_velocity(double timeStep) {
         /***************************TODO: implement this function**********************/
+
+        if (isFixed) return;
+
         // Apply gravity
         RowVector3d gravity(0, -9.8, 0);
         comVelocity += gravity * timeStep;
