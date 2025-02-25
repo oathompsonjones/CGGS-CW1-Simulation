@@ -52,10 +52,36 @@ class Constraint {
                                      MatrixXd& correctedCOMVelocities, MatrixXd& correctedAngVelocities, double tolerance) {
         /***************************TODO: implement this function**********************/
 
-        // stub implementation
         correctedCOMVelocities = currCOMVelocities;
         correctedAngVelocities = currAngVelocities;
-        return true;
+
+        Vector3d J = (currVertexPositions.row(0).transpose() - currVertexPositions.row(1).transpose()).normalized();
+        Vector3d arm1 = currVertexPositions.row(0).transpose() - currCOMPositions.row(0).transpose();
+        Vector3d arm2 = currVertexPositions.row(1).transpose() - currCOMPositions.row(1).transpose();
+        double norm = J.dot(((currCOMVelocities.row(0).transpose()) + ((Vector3d)currAngVelocities.row(0).transpose()).cross(arm1)) -
+                            ((currCOMVelocities.row(1).transpose()) + ((Vector3d)currAngVelocities.row(1).transpose()).cross(arm2)));
+
+        // Constraint is satisfied
+        if (abs(norm) <= tolerance) return true;
+
+        double totalInvMass = invMass1 + invMass2;
+        // Both objects are fixed
+        if (totalInvMass == 0) return false;
+
+        Vector3d arm1XJ = arm1.cross(J);
+        Vector3d arm2XJ = arm2.cross(J);
+
+        double arm1Inertia = arm1XJ.transpose() * invInertiaTensor1 * arm1XJ;
+        double arm2Inertia = arm2XJ.transpose() * invInertiaTensor2 * arm2XJ;
+        double lambda = -(1 + CRCoeff) * norm / (totalInvMass + arm1Inertia + arm2Inertia);
+
+        correctedCOMVelocities.row(0) += lambda * invMass1 * J.transpose();
+        correctedCOMVelocities.row(1) -= lambda * invMass2 * J.transpose();
+
+        correctedAngVelocities.row(0) += lambda * (invInertiaTensor1 * arm1XJ).transpose();
+        correctedAngVelocities.row(1) -= lambda * (invInertiaTensor2 * arm2XJ).transpose();
+
+        return false;
     }
 
     // projects the position unto the constraint
@@ -64,9 +90,26 @@ class Constraint {
                                      MatrixXd& correctedCOMPositions, double tolerance) {
         /***************************TODO: implement this function**********************/
 
-        // stub implementation
         correctedCOMPositions = currCOMPositions;
-        return true;
+
+        RowVector3d constraint = currConstPositions.row(1) - currConstPositions.row(0);
+        double dist = constraint.norm();
+        double diff = isUpper ? dist - refValue : refValue - dist;
+
+        // Constraint is satisfied
+        if (diff < tolerance) return true;
+
+        double totalInvMass = invMass1 + invMass2;
+        // Both objects are fixed
+        if (totalInvMass == 0) return false;
+
+        RowVector3d dir = constraint.normalized();
+        RowVector3d correction = dir * diff / totalInvMass;
+
+        correctedCOMPositions.row(0) += (isUpper ? 1 : -1) * invMass1 * correction;
+        correctedCOMPositions.row(1) += (isUpper ? -1 : 1) * invMass2 * correction;
+
+        return false;
     }
 };
 
