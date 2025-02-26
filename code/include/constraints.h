@@ -55,25 +55,28 @@ class Constraint {
         correctedCOMVelocities = currCOMVelocities;
         correctedAngVelocities = currAngVelocities;
 
-        Vector3d J = (currVertexPositions.row(0).transpose() - currVertexPositions.row(1).transpose()).normalized();
-        Vector3d arm1 = currVertexPositions.row(0).transpose() - currCOMPositions.row(0).transpose();
-        Vector3d arm2 = currVertexPositions.row(1).transpose() - currCOMPositions.row(1).transpose();
-        double norm = J.dot(((currCOMVelocities.row(0).transpose()) + ((Vector3d)currAngVelocities.row(0).transpose()).cross(arm1)) -
-                            ((currCOMVelocities.row(1).transpose()) + ((Vector3d)currAngVelocities.row(1).transpose()).cross(arm2)));
+        const Vector3d p1 = currVertexPositions.row(0).transpose();
+        const Vector3d p2 = currVertexPositions.row(1).transpose();
+        const Vector3d J = (p1 - p2).normalized();
+        const Vector3d arm1 = p1 - currCOMPositions.row(0).transpose();
+        const Vector3d arm2 = p2 - currCOMPositions.row(1).transpose();
+        const double norm =
+            J.dot(((currCOMVelocities.row(0).transpose()) + ((Vector3d)currAngVelocities.row(0).transpose()).cross(arm1)) -
+                  ((currCOMVelocities.row(1).transpose()) + ((Vector3d)currAngVelocities.row(1).transpose()).cross(arm2)));
 
         // Constraint is satisfied
         if (abs(norm) <= tolerance) return true;
 
-        double totalInvMass = invMass1 + invMass2;
+        const double totalInvMass = invMass1 + invMass2;
         // Both objects are fixed
         if (totalInvMass == 0) return false;
 
-        Vector3d arm1XJ = arm1.cross(J);
-        Vector3d arm2XJ = arm2.cross(J);
+        const Vector3d arm1XJ = arm1.cross(J);
+        const Vector3d arm2XJ = arm2.cross(J);
 
-        double arm1Inertia = arm1XJ.transpose() * invInertiaTensor1 * arm1XJ;
-        double arm2Inertia = arm2XJ.transpose() * invInertiaTensor2 * arm2XJ;
-        double lambda = -(1 + CRCoeff) * norm / (totalInvMass + arm1Inertia + arm2Inertia);
+        const double arm1Inertia = arm1XJ.transpose() * invInertiaTensor1 * arm1XJ;
+        const double arm2Inertia = arm2XJ.transpose() * invInertiaTensor2 * arm2XJ;
+        const double lambda = -(1 + CRCoeff) * norm / (totalInvMass + arm1Inertia + arm2Inertia);
 
         correctedCOMVelocities.row(0) += lambda * invMass1 * J.transpose();
         correctedCOMVelocities.row(1) -= lambda * invMass2 * J.transpose();
@@ -92,22 +95,21 @@ class Constraint {
 
         correctedCOMPositions = currCOMPositions;
 
-        RowVector3d constraint = currConstPositions.row(1) - currConstPositions.row(0);
-        double dist = constraint.norm();
-        double diff = isUpper ? dist - refValue : refValue - dist;
+        const RowVector3d constraint = currConstPositions.row(1) - currConstPositions.row(0);
+        const double dist = constraint.norm();
+        const double diff = isUpper ? dist - refValue : refValue - dist;
 
         // Constraint is satisfied
         if (diff < tolerance) return true;
 
-        double totalInvMass = invMass1 + invMass2;
+        const double totalInvMass = invMass1 + invMass2;
         // Both objects are fixed
         if (totalInvMass == 0) return false;
 
-        RowVector3d dir = constraint.normalized();
-        RowVector3d correction = dir * diff / totalInvMass;
+        const RowVector3d correction = (isUpper ? 1 : -1) * constraint / dist * diff / totalInvMass;
 
-        correctedCOMPositions.row(0) += (isUpper ? 1 : -1) * invMass1 * correction;
-        correctedCOMPositions.row(1) += (isUpper ? -1 : 1) * invMass2 * correction;
+        correctedCOMPositions.row(0) += invMass1 * correction;
+        correctedCOMPositions.row(1) -= invMass2 * correction;
 
         return false;
     }
