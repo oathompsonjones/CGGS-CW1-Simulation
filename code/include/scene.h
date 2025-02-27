@@ -2,6 +2,8 @@
 #define SCENE_HEADER_FILE
 
 #include <fstream>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "auxfunctions.h"
@@ -25,6 +27,21 @@ class Scene {
     // Mostly for visualization
     MatrixXi allF, constEdges;
     MatrixXd currV, currConstVertices;
+
+    unordered_map<int, unordered_set<int>> meshToConstraints;
+    unordered_set<int> flaggedConstraints;
+
+    void initialize_dependency_graph() {
+        for (int i = 0; i < constraints.size(); i++) {
+            meshToConstraints[constraints[i].m1].insert(i);
+            meshToConstraints[constraints[i].m2].insert(i);
+        }
+    }
+
+    void flag_affected_constraints(int mesh1, int mesh2) {
+        for (int constraintIndex : meshToConstraints[mesh1]) flaggedConstraints.insert(constraintIndex);
+        for (int constraintIndex : meshToConstraints[mesh2]) flaggedConstraints.insert(constraintIndex);
+    }
 
     // adding an objects. You do not need to update this generally
     void add_mesh(const MatrixXd& V, const MatrixXi& F, const MatrixXi& T, const double density, const bool isFixed,
@@ -122,71 +139,68 @@ class Scene {
         }
 
         // Resolving constraints
+        initialize_dependency_graph();
+        flaggedConstraints.clear();
+        for (int i = 0; i < constraints.size(); i++) flaggedConstraints.insert(i);
+
         int currIteration = 0;
-        int zeroStreak =
-            0;  // how many consecutive constraints are already below tolerance without any change; the algorithm stops if all are.
-        int currConstIndex = 0;
-        while ((zeroStreak < constraints.size()) && (currIteration * constraints.size() < maxIterations)) {
-            Constraint currConstraint = constraints[currConstIndex];
+        while (!flaggedConstraints.empty() && (currIteration * constraints.size() < maxIterations)) {
+            unordered_set<int> newFlaggedConstraints;
 
-            RowVector3d origConstPos1 = meshes[currConstraint.m1].origV.row(currConstraint.v1);
-            RowVector3d origConstPos2 = meshes[currConstraint.m2].origV.row(currConstraint.v2);
+            for (int constraintIndex : flaggedConstraints) {
+                Constraint& currConstraint = constraints[constraintIndex];
 
-            RowVector3d currConstPos1 = QRot(origConstPos1, meshes[currConstraint.m1].orientation) + meshes[currConstraint.m1].COM;
-            RowVector3d currConstPos2 = QRot(origConstPos2, meshes[currConstraint.m2].orientation) + meshes[currConstraint.m2].COM;
+                RowVector3d origConstPos1 = meshes[currConstraint.m1].origV.row(currConstraint.v1);
+                RowVector3d origConstPos2 = meshes[currConstraint.m2].origV.row(currConstraint.v2);
 
-            MatrixXd currCOMPositions(2, 3);
-            currCOMPositions << meshes[currConstraint.m1].COM, meshes[currConstraint.m2].COM;
-            MatrixXd currConstPositions(2, 3);
-            currConstPositions << currConstPos1, currConstPos2;
+                RowVector3d currConstPos1 = QRot(origConstPos1, meshes[currConstraint.m1].orientation) + meshes[currConstraint.m1].COM;
+                RowVector3d currConstPos2 = QRot(origConstPos2, meshes[currConstraint.m2].orientation) + meshes[currConstraint.m2].COM;
 
-            MatrixXd correctedCOMPositions;
-
-            bool positionWasValid =
-                currConstraint.resolve_position_constraint(currCOMPositions, currConstPositions, correctedCOMPositions, tolerance);
-
-            if (positionWasValid) {
-                zeroStreak++;
-            } else {
-                // only update the COM and angular velocity, don't both updating all currV because it might change again during this
-                // loop!
-                zeroStreak = 0;
-
-                meshes[currConstraint.m1].COM = correctedCOMPositions.row(0);
-                meshes[currConstraint.m2].COM = correctedCOMPositions.row(1);
-
-                // resolving velocity
-                currConstPos1 = QRot(origConstPos1, meshes[currConstraint.m1].orientation) + meshes[currConstraint.m1].COM;
-                currConstPos2 = QRot(origConstPos2, meshes[currConstraint.m2].orientation) + meshes[currConstraint.m2].COM;
-                // cout<<"(currConstPos1-currConstPos2).norm(): "<<(currConstPos1-currConstPos2).norm()<<endl;
-                // cout<<"(meshes[currConstraint.m1].currV.row(currConstraint.v1)-meshes[currConstraint.m2].currV.row(currConstraint.v2)).norm():
-                // "<<(meshes[currConstraint.m1].currV.row(currConstraint.v1)-meshes[currConstraint.m2].currV.row(currConstraint.v2)).norm()<<endl;
+                MatrixXd currCOMPositions(2, 3);
                 currCOMPositions << meshes[currConstraint.m1].COM, meshes[currConstraint.m2].COM;
+                MatrixXd currConstPositions(2, 3);
                 currConstPositions << currConstPos1, currConstPos2;
-                MatrixXd currCOMVelocities(2, 3);
-                currCOMVelocities << meshes[currConstraint.m1].comVelocity, meshes[currConstraint.m2].comVelocity;
-                MatrixXd currAngVelocities(2, 3);
-                currAngVelocities << meshes[currConstraint.m1].angVelocity, meshes[currConstraint.m2].angVelocity;
 
-                Matrix3d invInertiaTensor1 = meshes[currConstraint.m1].get_curr_inv_IT();
-                Matrix3d invInertiaTensor2 = meshes[currConstraint.m2].get_curr_inv_IT();
-                MatrixXd correctedCOMVelocities, correctedAngVelocities, correctedCOMPositions;
+                MatrixXd correctedCOMPositions;
 
-                bool velocityWasValid = currConstraint.resolve_velocity_constraint(
-                    currCOMPositions, currConstPositions, currCOMVelocities, currAngVelocities, invInertiaTensor1, invInertiaTensor2,
-                    correctedCOMVelocities, correctedAngVelocities, tolerance);
+                bool positionWasValid =
+                    currConstraint.resolve_position_constraint(currCOMPositions, currConstPositions, correctedCOMPositions, tolerance);
 
-                if (!velocityWasValid) {
-                    meshes[currConstraint.m1].comVelocity = correctedCOMVelocities.row(0);
-                    meshes[currConstraint.m2].comVelocity = correctedCOMVelocities.row(1);
+                if (!positionWasValid) {
+                    meshes[currConstraint.m1].COM = correctedCOMPositions.row(0);
+                    meshes[currConstraint.m2].COM = correctedCOMPositions.row(1);
 
-                    meshes[currConstraint.m1].angVelocity = correctedAngVelocities.row(0);
-                    meshes[currConstraint.m2].angVelocity = correctedAngVelocities.row(1);
+                    currConstPos1 = QRot(origConstPos1, meshes[currConstraint.m1].orientation) + meshes[currConstraint.m1].COM;
+                    currConstPos2 = QRot(origConstPos2, meshes[currConstraint.m2].orientation) + meshes[currConstraint.m2].COM;
+                    currCOMPositions << meshes[currConstraint.m1].COM, meshes[currConstraint.m2].COM;
+                    currConstPositions << currConstPos1, currConstPos2;
+                    MatrixXd currCOMVelocities(2, 3);
+                    currCOMVelocities << meshes[currConstraint.m1].comVelocity, meshes[currConstraint.m2].comVelocity;
+                    MatrixXd currAngVelocities(2, 3);
+                    currAngVelocities << meshes[currConstraint.m1].angVelocity, meshes[currConstraint.m2].angVelocity;
+
+                    Matrix3d invInertiaTensor1 = meshes[currConstraint.m1].get_curr_inv_IT();
+                    Matrix3d invInertiaTensor2 = meshes[currConstraint.m2].get_curr_inv_IT();
+                    MatrixXd correctedCOMVelocities, correctedAngVelocities;
+
+                    bool velocityWasValid = currConstraint.resolve_velocity_constraint(
+                        currCOMPositions, currConstPositions, currCOMVelocities, currAngVelocities, invInertiaTensor1,
+                        invInertiaTensor2, correctedCOMVelocities, correctedAngVelocities, tolerance);
+
+                    if (!velocityWasValid) {
+                        meshes[currConstraint.m1].comVelocity = correctedCOMVelocities.row(0);
+                        meshes[currConstraint.m2].comVelocity = correctedCOMVelocities.row(1);
+
+                        meshes[currConstraint.m1].angVelocity = correctedAngVelocities.row(0);
+                        meshes[currConstraint.m2].angVelocity = correctedAngVelocities.row(1);
+                    }
+
+                    flag_affected_constraints(currConstraint.m1, currConstraint.m2);
                 }
             }
 
             currIteration++;
-            currConstIndex = (currConstIndex + 1) % (constraints.size());
+            flaggedConstraints = newFlaggedConstraints;
         }
 
         if (currIteration * constraints.size() >= maxIterations)
