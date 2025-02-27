@@ -2,6 +2,7 @@
 #define SCENE_HEADER_FILE
 
 #include <fstream>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -41,6 +42,85 @@ class Scene {
     void flag_affected_constraints(int mesh1, int mesh2) {
         for (int constraintIndex : meshToConstraints[mesh1]) flaggedConstraints.insert(constraintIndex);
         for (int constraintIndex : meshToConstraints[mesh2]) flaggedConstraints.insert(constraintIndex);
+    }
+
+    struct GridCell {
+        vector<int> meshIndices;
+    };
+
+    struct GridCellHash {
+        size_t operator()(const tuple<int, int, int>& key) const {
+            auto [x, y, z] = key;
+            return hash<int>()(x) ^ hash<int>()(y) ^ hash<int>()(z);
+        }
+    };
+
+    struct pair_hash {
+        template <class T1, class T2>
+        size_t operator()(const pair<T1, T2>& p) const {
+            auto hash1 = hash<T1>{}(p.first);
+            auto hash2 = hash<T2>{}(p.second);
+            return hash1 ^ hash2;
+        }
+    };
+
+    unordered_map<tuple<int, int, int>, GridCell, GridCellHash> grid;
+    double cellSize = 1.0;
+
+    tuple<int, int, int> get_grid_cell(const RowVector3d& position) {
+        int x = static_cast<int>(position(0) / cellSize);
+        int y = static_cast<int>(position(1) / cellSize);
+        int z = static_cast<int>(position(2) / cellSize);
+        return make_tuple(x, y, z);
+    }
+
+    void add_mesh_to_grid(int meshIndex) {
+        const Mesh& mesh = meshes[meshIndex];
+        RowVector3d minCorner = mesh.currV.colwise().minCoeff();
+        RowVector3d maxCorner = mesh.currV.colwise().maxCoeff();
+
+        auto [minX, minY, minZ] = get_grid_cell(minCorner);
+        auto [maxX, maxY, maxZ] = get_grid_cell(maxCorner);
+
+        for (int x = minX; x <= maxX; ++x) {
+            for (int y = minY; y <= maxY; ++y) {
+                for (int z = minZ; z <= maxZ; ++z) {
+                    grid[make_tuple(x, y, z)].meshIndices.push_back(meshIndex);
+                }
+            }
+        }
+    }
+
+    void clear_grid() {
+        grid.clear();
+    }
+
+    void check_collisions_in_grid(double CRCoeff) {
+        unordered_set<pair<int, int>, pair_hash> checkedPairs;
+
+        for (const auto& cellPair : grid) {
+            const GridCell& cell = cellPair.second;
+            for (size_t i = 0; i < cell.meshIndices.size(); ++i) {
+                for (size_t j = i + 1; j < cell.meshIndices.size(); ++j) {
+                    int meshIndex1 = cell.meshIndices[i];
+                    int meshIndex2 = cell.meshIndices[j];
+
+                    // Avoid redundant checks
+                    if (checkedPairs.find({meshIndex1, meshIndex2}) != checkedPairs.end() ||
+                        checkedPairs.find({meshIndex2, meshIndex1}) != checkedPairs.end()) {
+                        continue;
+                    }
+
+                    double depth;
+                    RowVector3d contactNormal, penPosition;
+                    if (meshes[meshIndex1].is_collide(meshes[meshIndex2], depth, contactNormal, penPosition)) {
+                        handle_collision(meshes[meshIndex1], meshes[meshIndex2], depth, contactNormal, penPosition, CRCoeff);
+                    }
+
+                    checkedPairs.insert({meshIndex1, meshIndex2});
+                }
+            }
+        }
     }
 
     // adding an objects. You do not need to update this generally
@@ -122,13 +202,9 @@ class Scene {
         for (int i = 0; i < meshes.size(); i++) meshes[i].integrate(timeStep);
 
         // detecting and handling collisions when found
-        // This is done exhaustively: checking every two objects in the scene.
-        double depth;
-        RowVector3d contactNormal, penPosition;
-        for (int i = 0; i < meshes.size(); i++)
-            for (int j = i + 1; j < meshes.size(); j++)
-                if (meshes[i].is_collide(meshes[j], depth, contactNormal, penPosition))
-                    handle_collision(meshes[i], meshes[j], depth, contactNormal, penPosition, CRCoeff);
+        clear_grid();
+        for (int i = 0; i < meshes.size(); i++) add_mesh_to_grid(i);
+        check_collisions_in_grid(CRCoeff);
 
         // colliding with the pseudo-mesh of the ground
         for (int i = 0; i < meshes.size(); i++) {
@@ -256,6 +332,14 @@ class Scene {
             cout << "COM: " << userCOM << endl;
             cout << "orientation: " << userOrientation << endl;
         }
+
+        // Update cell size based on the size of the objects
+        double maxDim = 0.0;
+        for (int i = 0; i < meshes.size(); i++) {
+            double maxMeshDim = meshes[i].currV.colwise().maxCoeff().maxCoeff();
+            if (maxMeshDim > maxDim) maxDim = maxMeshDim;
+        }
+        cellSize = maxDim / 10.0;
 
         // adding ground mesh artifically
         groundMesh = Mesh(MatrixXd(0, 3), MatrixXi(0, 3), MatrixXi(0, 4), 0.0, true, RowVector3d::Zero(), RowVector4d::Zero());
